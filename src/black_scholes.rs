@@ -1,9 +1,18 @@
-use std::thread;
 pub mod black_scholes {
+    use tokio::task;
+
     #[derive(Debug)]
     pub struct BlackScholesFormulaParams {
         pub S: f64,
         pub K: f64,
+        pub r: f64,
+        pub sigma: f64,
+        pub T: f64
+    }
+
+    pub struct BlackScholesFormulaStrikePriceStreamParams {
+        pub S: f64,
+        pub K: Vec<f64>,
         pub r: f64,
         pub sigma: f64,
         pub T: f64
@@ -50,4 +59,51 @@ pub mod black_scholes {
         call_option
     }
 
+    #[tokio::main]
+    pub async fn black_scholes_formula_multiple_strike_prices(params: BlackScholesFormulaStrikePriceStreamParams) -> Vec<f64> {
+        use std::time::Instant;
+        let now = Instant::now();
+        let futures: Vec<_> = params.K.clone().into_iter().map(|strike_price| {
+            let local_params = BlackScholesFormulaParams {
+                S: params.S,
+                K: strike_price,
+                r: params.r,
+                sigma: params.sigma,
+                T: params.T,
+            };
+            
+            task::spawn(async move {
+                let d1 = distribution1(&local_params);
+                let d2 = distribution2(d1, &local_params);
+                local_params.S * cdf_normal(d1) - strike_price * (-local_params.r * local_params.T).exp() * cdf_normal(d2)
+            })
+        }).collect();
+
+    
+        let results: Vec<_> = futures::future::join_all(futures).await.into_iter().map(|res| res.unwrap()).collect();
+        let elapsed = now.elapsed();
+        println!("Elapsed time (Synchronous requests): {:.3?}", elapsed);
+        results
+    }
+
+    pub fn black_scholes_formula_multiple_strike_prices_async(params: BlackScholesFormulaStrikePriceStreamParams) -> Vec<f64> {
+        use std::time::Instant;
+        let now = Instant::now();
+        let results: Vec<_> = params.K.clone().into_iter().map(|strike_price| {
+            let local_params = BlackScholesFormulaParams {
+                S: params.S,
+                K: strike_price,
+                r: params.r,
+                sigma: params.sigma,
+                T: params.T,
+            };
+            
+            let d1 = distribution1(&local_params);
+            let d2 = distribution2(d1, &local_params);
+            local_params.S * cdf_normal(d1) - strike_price * (-local_params.r * local_params.T).exp() * cdf_normal(d2)
+        }).collect();
+        let elapsed = now.elapsed();
+        println!("Elapsed time (Concurrent Requests): {:.3?}", elapsed);
+        results
+    }
 }
